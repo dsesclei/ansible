@@ -1,0 +1,10 @@
+#!/bin/zsh
+vagrant init centos/7
+vagrant up
+export VAGRANT_KEY=$(vagrant ssh-config | grep IdentityFile | cut -f4 -d' ')
+export VAGRANT_PORT=$(vagrant ssh-config | grep Port | cut -f4 -d' ')
+ansible-playbook -i ansible/hosts.yml ansible/config.yml
+vagrant ssh
+vagrant destroy
+rm Vagrantfile
+ssh-keygen -R "[localhost]:$VAGRANT_PORT"

@@ -1,0 +1,211 @@
+---
+- name: Deploy server/workstation
+  hosts: localhost
+  vars:
+    username: dave
+    HOME: "/home/{{ username }}"
+  remote_user: ansible
+  become: yes
+  become_method: sudo
+
+  tasks:
+    ###
+    # Install base packages.
+    ###
+    - name: (install) yum
+      yum:
+        name: '*'
+        state: latest
+
+    - name: (install) epel
+      yum:
+        name: https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+        state: present
+
+    -  name: (repo) add ripgrep source
+       get_url:
+        url: https://copr.fedorainfracloud.org/coprs/carlwgeorge/ripgrep/repo/epel-7/carlwgeorge-ripgrep-epel-7.repo
+        dest: /etc/yum.repos.d/ripgrep.repo
+
+    -  name: (repo) add docker source
+       get_url:
+        url: https://download.docker.com/linux/centos/docker-ce.repo
+        dest: /etc/yum.repos.d/docker-ce.repo
+
+    - name: (install) various dependencies
+      yum:
+        name:
+          - '@^virtualization-host-environment'
+          - '@development-tools'
+          - autoconf
+          - automake
+          - curl
+          - device-mapper-persistent-data
+          - libffi-devel
+          - libguestfs-tools
+          - libtool
+          - libvirt
+          - libvirt-python
+          - libxslt-devel
+          - libyaml-devel 
+          - lvm2
+          - ncurses-devel
+          - openssl-devel
+          - qemu-kvm
+          - readline-devel 
+          - unixODBC-devel 
+          - unzip
+          - virt-install
+          - wget
+          - yum-utils
+        state: latest
+
+    - name: (install) dev tools
+      yum:
+        name:
+          - containerd.io
+          - docker-ce
+          - docker-ce-cli
+          - fail2ban
+          - git
+          - ripgrep
+          - tmux
+          - vim
+          - zsh
+        state: latest
+
+    -  name: (install) minikube
+       get_url:
+        url: https://github.com/kubernetes/minikube/releases/download/v1.9.2/minikube-linux-amd64
+        dest: /usr/local/bin/minikube
+        group: docker
+        mode: 'g+x'
+
+
+    ###
+    # Configure user account.
+    ###
+    - name: (group) ensure 'wheel' exists
+      group:
+        name: wheel
+        state: present
+
+    # https://stackoverflow.com/a/37334415/6995909
+    - name: (group) allow passwordless sudo for 'wheel'
+      lineinfile:
+        dest: /etc/sudoers
+        state: present
+        regexp: '^%wheel'
+        line: '%wheel ALL=(ALL) NOPASSWD: ALL'
+        validate: 'visudo -cf %s'
+
+    - name: (user) add default user
+      user:
+        name: "{{ username }}"
+        shell: /bin/zsh
+        groups:
+          - wheel
+          - docker
+
+    - name: (user) copy ssh key from local machine
+      authorized_key:
+        user: "{{ username }}"
+        key: "{{ HOME }}/{{ lookup('file', '/.ssh/id_rsa.pub') }}"
+        state: present
+        
+
+    ###
+    # Configure development environment.
+    ###
+    - name: (dev) clone asdf
+      git:
+        repo: https://github.com/asdf-vm/asdf.git
+        dest: "{{ HOME }}/.asdf"
+
+    - name: (dev) clone prezto
+      git:
+        repo: https://github.com/sorin-ionescu/prezto.git
+        dest: "{{ HOME }}/.zprezto"
+        force: yes
+
+    - name: (dev) clone basic vim config
+      git:
+        repo: https://github.com/amix/vimrc.git
+        dest: "{{ HOME }}/.vim_runtime"
+
+    - name: (dev) install vimrc
+      shell: "{{ HOME }}/.vim_runtime/install_basic_vimrc.sh"
+
+    - name: (dev) clone source repo
+      git:
+        repo: https://github.com/dsesclei/workstation.git
+        dest: "{{ HOME }}/workstation"
+
+    - name: (dev) overwrite config files
+      file:
+        src: "{{ item }}"
+        dest: "{{ HOME }}"
+        with_fileglob:
+          - ../dotfiles/*
+
+    - name: (dev) update asdf
+      become_user: "{{ username }}"
+      shell: asdf update
+
+    - name: (dev) install asdf plugins
+      become_user: "{{ username }}"
+      shell: "asdf plugin-add {{ item }}"
+      with_items:
+        - clojure
+        - golang
+        - java
+        - nodejs
+        - python
+        - ruby
+        - rust
+
+    # asdf supports `list latest` but not `global latest`, change to use that
+    # syntax once fixed.
+    - name: (dev) install asdf languages
+      become_user: "{{ username }}"
+      shell: "asdf install {{ item }}"
+      with_items:
+        - "clojure 1.10.1"
+        - "golang 1.13.6"
+        - "java adopt-openjdk-13+33"
+        - "python pypy2.7-7.3.0"
+        - "python pypy3.6-7.3.0"
+        - "ruby 2.7.0"
+        - "rust 1.40.0"
+
+    - name: (dev) use languages
+      become_user: "{{ username }}"
+      shell: "asdf global {{ item }}"
+      with_items:
+        - "clojure 1.10.1"
+        - "golang 1.13.6"
+        - "java adopt-openjdk-13+33"
+        - "python pypy3.6-7.3.0"
+        - "ruby 2.7.0"
+        - "rust 1.40.0"
+
+    - name: (service) start fail2ban
+      service:
+        name: fail2ban
+        state: started
+        enabled: yes
+
+    - name: (service) start libvirtd
+      service:
+        name: libvirtd       
+        state: started
+        enabled: yes
+
+    - name: (service) start docker
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: reboot
+      reboot:
